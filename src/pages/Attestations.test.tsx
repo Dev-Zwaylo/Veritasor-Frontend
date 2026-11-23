@@ -5,11 +5,11 @@ import Attestations from './Attestations'
 import { ToastProvider } from '../components/ToastContext'
 import { AttestationsProvider } from '../state/attestations'
 
-function renderPage() {
+function renderPage(initialEntries: string[] = ['/attestations']) {
   return render(
     <AttestationsProvider>
       <ToastProvider>
-        <MemoryRouter>
+        <MemoryRouter initialEntries={initialEntries}>
           <Attestations />
         </MemoryRouter>
       </ToastProvider>
@@ -97,5 +97,27 @@ describe('Attestations Page', () => {
     expect(firstBar).not.toBeNull()
     fireEvent.mouseEnter(firstBar!)
     expect(status).toHaveTextContent(initialStatus!)
+  })
+
+  it('reads status and date range query params into filters and filters the list', () => {
+    renderPage(['/attestations?status=failed&from=2026-05-19&to=2026-05-21'])
+
+    expect(screen.getByLabelText('Filter by status')).toHaveValue('failed')
+    expect(screen.getByLabelText('Filter from date')).toHaveValue('2026-05-19')
+    expect(screen.getByLabelText('Filter to date')).toHaveValue('2026-05-21')
+
+    const links = screen.getAllByRole('link', { name: /view details/i })
+    expect(links).toHaveLength(1)
+    expect(links[0]).toHaveAttribute('href', '/attestations/att-003')
+  })
+
+  it('shows filtered empty state and clears filters when requested', () => {
+    renderPage(['/attestations?status=verified&from=2026-01-01&to=2026-01-02'])
+
+    expect(screen.getByText(/no attestations match the selected filters/i)).toBeInTheDocument()
+    const clearButtons = screen.getAllByRole('button', { name: /clear filters/i })
+    fireEvent.click(clearButtons[0])
+
+    expect(screen.getAllByRole('link', { name: /view details/i }).length).toBeGreaterThanOrEqual(3)
   })
 })
