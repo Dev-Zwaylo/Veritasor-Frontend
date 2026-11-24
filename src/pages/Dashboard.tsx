@@ -1,13 +1,23 @@
+import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import AttestationConfirmModal from '../components/AttestationConfirmModal'
 import AttestationTrendChart from '../components/AttestationTrendChart'
 import DateRangePicker from '../components/DateRangePicker'
 import UsageMeter from '../components/UsageMeter'
+import StaleDataChip from '../components/StaleDataChip'
 import { useViewportObserver } from '../hooks/useViewportObserver'
 import { useToast } from '../components/ToastContext'
 import { useAttestations } from '../state/attestations'
 import { DEFAULT_TRIGGER_DETAILS } from '../state/attestationMocks'
+import { track } from '../analytics'
+
+const METRICS = [
+  { label: 'Total Revenue', value: '$84,320', sub: 'YTD 2026' },
+  { label: 'Attestations', value: '12', sub: 'This month' },
+  { label: 'Revenue Sources', value: '3', sub: 'Connected' },
+]
 import { aggregateAttestationTrend } from '../utils/attestationChartData'
 import {
   computeDashboardKpis,
@@ -36,10 +46,19 @@ const USAGE_DATA = [
   },
 ]
 
+export const STALE_DATA_THRESHOLD_MS = 5 * 60 * 1000
+
+export function isAttestationDataStale(lastUpdated: string, now = Date.now()) {
+  const updatedAt = Date.parse(lastUpdated)
+  return Number.isFinite(updatedAt) && now - updatedAt >= STALE_DATA_THRESHOLD_MS
+}
+
 export default function Dashboard() {
   const [modalOpen, setModalOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [attestError, setAttestError] = useState<string | null>(null)
+  const [now, setNow] = useState(() => Date.now())
+  const { trigger, lastUpdated, refresh } = useAttestations()
   const { list: attestations, trigger } = useAttestations()
   const { addToast } = useToast()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -90,6 +109,18 @@ export default function Dashboard() {
     [kpis],
   )
 
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(Date.now()), 30 * 1000)
+    return () => window.clearInterval(interval)
+  }, [])
+
+  const isStale = isAttestationDataStale(lastUpdated, now)
+
+  function handleRefresh() {
+    refresh()
+    setNow(Date.now())
+  }
+
   // Entrance animation observers — one per metric card
   const { ref: verifiedRef, isVisible: verifiedVisible } = useViewportObserver<HTMLDivElement>()
   const { ref: pendingRef, isVisible: pendingVisible } = useViewportObserver<HTMLDivElement>()
@@ -118,6 +149,11 @@ export default function Dashboard() {
     setAttestError(null)
     try {
       await trigger(DEFAULT_TRIGGER_DETAILS)
+      track('attestation_created', {
+        source: DEFAULT_TRIGGER_DETAILS.source,
+        period: DEFAULT_TRIGGER_DETAILS.period,
+        recordCount: DEFAULT_TRIGGER_DETAILS.recordCount,
+      })
       addToast('Attestation submitted successfully.', 'success')
       setModalOpen(false)
     } catch (err) {
@@ -134,6 +170,45 @@ export default function Dashboard() {
 
   return (
     <div className="dashboard-page">
+      <h1 style={{ marginTop: 0 }}>Dashboard</h1>
+      <p style={{ color: 'var(--muted)' }}>
+        Connect your revenue sources and manage attestations from here. (Demo build: all figures shown are sample data.)
+      </p>
+      <div className="dashboard-data-status" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
+        {isStale && <StaleDataChip fetchedAt={lastUpdated} />}
+        <button type="button" className="dashboard-action-btn" onClick={handleRefresh}>
+          Refresh data
+        </button>
+      </div>
+
+      <div className="dashboard-grid">
+        <section className="dashboard-section">
+          <h2>Key metrics</h2>
+          <div className="dashboard-metrics-grid">
+            {METRICS.map((m, i) => {
+              const refs = [revenueRef, attestationsRef, sourcesRef]
+              const visibles = [revenueVisible, attestationsVisible, sourcesVisible]
+              const metricRef = refs[i] ?? refs[0]
+              const isVisible = visibles[i] ?? false
+              return (
+                <div
+                  key={m.label}
+                  ref={metricRef}
+                  className={`dashboard-metric-card chart-entrance chart-entrance-bar-grow${isVisible ? ' chart-entrance-animate' : ''}`}
+                  style={{
+                    transitionDelay: `${i * 60}ms`,
+                    animationDelay: `${i * 60}ms`,
+                    willChange: isVisible ? undefined : 'opacity, transform',
+                  }}
+                >
+                  <span className="dashboard-metric-label">{m.label}</span>
+                  <span className="dashboard-metric-value">{m.value}</span>
+                  <span className="dashboard-metric-sub">{m.sub}</span>
+                </div>
+              )
+            })}
+          </div>
+        </section>
       <div className="dashboard-header-row">
         <div>
           <h1 style={{ marginTop: 0 }}>Dashboard</h1>
